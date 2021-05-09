@@ -74,7 +74,7 @@ class SubProblem:
     
     def update_model(self):
 
-        self.v = {}
+        self.y = {}
         for var in self.modelo.getVars():
             if var.VarName in "if_locations_is_served":
                 ix         = var.index
@@ -105,10 +105,9 @@ class MasterProblem:
     '''
     Model to find duals (set covering problem)
     '''
-    def __init__(self, c, K, routes, modelo=None):
+    def __init__(self, c, routes, modelo=None):
 
         self.c = c # Cost for each route dim=[routes]
-        self.K = K
         self.routes = routes # dim=[locations, routes]
         self.routes_index = np.arange(routes.shape[1])
         self.locations_index = np.arange(1, routes.shape[0])
@@ -143,7 +142,7 @@ class MasterProblem:
     def RelaxOptimize(self):
         self.relax_modelo = self.modelo.relax()
         self.relax_modelo.optimize()
-        print("------Status Code:{}".format(self.relax_modelo.Status) )
+        # print("------Status Code:{}".format(self.relax_modelo.Status) )
 
     def getDuals(self):
 
@@ -155,5 +154,5 @@ class MasterProblem:
         return pi
 
     def getSolution(self):
-        
+
         return self.relax_modelo.getAttr('X')
