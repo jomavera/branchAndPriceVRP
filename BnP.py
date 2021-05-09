@@ -26,31 +26,28 @@ def solve_price(obj_val, demands, capacity, distances, MasterProb):
     bst_temp = Tree()
     MasterProb.RelaxOptimize()
     bst_temp.insert(MasterProb.relax_modelo.ObjVal, MasterProb)
+    last_obj = None
     while True:
         solution = MasterProb.getSolution()
         duals = MasterProb.getDuals()
         print(MasterProb.relax_modelo.ObjVal)
+        # print(solution)
 
         branched = False
 
         for i in solution:
-            if i > 0.01 and np.abs(i - 1.0) > 0.01:
+            if i > 0.1 and np.abs(i - 1.0) > 0.1:
                 print("#--#--#--# Not integer solution  ........Branching")
                 MP_1, MP_2 = branch(
-                    n,
-                    demands,
-                    capacity,
-                    distances,
-                    duals,
-                    solution,
-                    MasterProb,
-                    bst_temp,
+                    n, demands, capacity, distances, duals, solution, MasterProb
                 )
                 if MP_1 != None:
                     MP_1.RelaxOptimize()
+                    sol_MP_1 = MP_1.relax_modelo.ObjVal
                     bst_temp.insert(MP_1.relax_modelo.ObjVal, MP_1)
                 if MP_2 != None:
                     MP_2.RelaxOptimize()
+                    sol_MP_2 = MP_2.relax_modelo.ObjVal
                     bst_temp.insert(MP_2.relax_modelo.ObjVal, MP_2)
                 if MP_1 == None and MP_2 == None:
                     print("Not branched")
@@ -67,10 +64,6 @@ def solve_price(obj_val, demands, capacity, distances, MasterProb):
 
             print("--------SP Obj Val:{}".format(SP_branch.modelo.ObjVal))
 
-            if SP_branch.modelo.ObjVal >= -0.0001:  # break if no more columns
-
-                break
-
             newAssing = [SP_branch.y[i].x for i in SP_branch.y]  # new route
             newColumn = gp.Column(newAssing, MasterProb.modelo.getConstrs())
             obj = get_min_dist(newAssing, distances)  # Cost of new route
@@ -79,17 +72,21 @@ def solve_price(obj_val, demands, capacity, distances, MasterProb):
             MasterProb.RelaxOptimize()
             bst_temp.insert(MasterProb.relax_modelo.ObjVal, MasterProb)
 
+            if obj + SP_branch.modelo.ObjVal >= -0.00001:  # break if no more columns
+
+                break
+
         else:
             node = bst_temp.find_min()
+            # while last_obj == node.obj:
+            #     bst_temp.remove(node.obj)
+            #     node = bst_temp.find_min()
             MasterProb = node.model
-            matriz = MasterProb.modelo.getA().toarray()[: len(MP.locations_index), :]
+            # last_obj = node.obj
+    return MasterProb
 
-    return MP_branch
 
-
-def branch(
-    n, demands, C, distances, duals, solution_to_branch, MP_to_copy, binary_tree
-):
+def branch(n, demands, C, distances, duals, solution_to_branch, MP_to_copy):
 
     SP_1 = SubProblem(n, demands, capacity, distances, duals)
     SP_2 = SubProblem(n, demands, capacity, distances, duals)
@@ -129,8 +126,10 @@ def branch(
             locations_prime = [x for x in locations_index if x != i]
             for j in locations_prime:
 
-                if s1_and_s2[i - 1] and s1_not_s2[j - 1]:
-                    SP_1.modelo.addConstr(SP_1.y[i - 1] + SP_1.y[j - 1] >= 1)
+                if (s1_and_s2[i - 1] and s1_not_s2[j - 1]) or (
+                    s1_and_s2[j - 1] and s1_not_s2[i - 1]
+                ):
+                    SP_1.modelo.addConstr(SP_1.y[i - 1] + SP_1.y[j - 1] == 2)
                     SP_2.modelo.addConstr(SP_2.y[i - 1] + SP_2.y[j - 1] <= 1)
 
     MP_1, MP_2 = copy_models(MP_to_copy)
@@ -186,7 +185,6 @@ coordinates = np.stack(coordinates_list, axis=0)
 distances = euclidean_distances(coordinates)
 n = coordinates.shape[0]
 EPS = 0.001
-K = 5
 
 start_time = time.time()
 # ------ Encontrar assingments iniciales factibles ------#
