@@ -1,92 +1,84 @@
-import re
 import numpy as np
 import gurobipy as gp
 from gurobipy import GRB
-from sklearn.metrics.pairwise import euclidean_distances
-from models import GreedySolution, SubProblem, MasterProblem
-import time
+from models import SubProblem, MasterProblem
 from itertools import combinations
-from utils import get_min_dist
-from bst import Tree
+from utils import get_min_dist, copy_model, copy_models
 
 
-def copy_models(MP_to_copy):
+def branch_n_price(n, c, init_assignments, demands, capacity, distances, MasterProb):
 
-    MP_1 = MasterProblem(c, init_assingments, MP_to_copy.modelo)
-    MP_1.update_model()
-    MP_2 = MasterProblem(c, init_assingments, MP_to_copy.modelo)
-    MP_2.update_model()
+    queue = [ MasterProb ]
 
-    return MP_1, MP_2
+    best_obj = 1e3
+    nodes_explored = 0
+    best_model = None
 
+    while len(queue) > 0:
+        MP_branch = queue.pop()
+        nodes_explored += 1
+        MP_branch.RelaxOptimize()
+        solution = MP_branch.getSolution()
+        duals = MP_branch.getDuals()
+        obj_val = MP_branch.relax_modelo.ObjVal
+        branch_cost = MP_branch.getCosts()
+        branch_routes = MP_branch.modelo.getA().toarray()
+        sol_is_int = all([float(round(s,4)).is_integer() for s in solution ])
+        # sol_is_int = all([False if i > 0.3 and np.abs(i - 1.0) > 0.3 else True for i in solution ])
+        if obj_val < best_obj:
+            print(f"Best Obj: {obj_val}")
+            print(f"Nodes explored: {nodes_explored}")
+            best_obj = obj_val
+            if sol_is_int:
+                print(f"best sol: {solution}")
+                best_model = copy_model(branch_cost, branch_routes, MP_branch)
 
-def solve_price(obj_val, demands, capacity, distances, MasterProb):
+        SP_branch = SubProblem(n, demands, capacity, distances, duals)
+        SP_branch.build_model()
 
-    # MP_branch.modelo.Params.BestObjStop = obj_val
-    bst_temp = Tree()
-    MasterProb.RelaxOptimize()
-    bst_temp.insert(MasterProb.relax_modelo.ObjVal, MasterProb)
-    last_obj = None
-    while True:
-        solution = MasterProb.getSolution()
-        duals = MasterProb.getDuals()
-        print(MasterProb.relax_modelo.ObjVal)
-        # print(solution)
+        SP_branch.optimize()
 
-        branched = False
+        # print("--------SP Obj Val:{}".format(SP_branch.modelo.ObjVal))
 
-        for i in solution:
-            if i > 0.1 and np.abs(i - 1.0) > 0.1:
+        newAssing = [SP_branch.y[i].x for i in SP_branch.y]  # new route
+        obj = get_min_dist(newAssing, distances)  # Cost of new route
+
+        if obj + SP_branch.modelo.ObjVal < 0.0: 
+            newColumn = gp.Column(newAssing, MasterProb.modelo.getConstrs())
+            MP_branch.modelo.addVar(vtype=GRB.BINARY, obj=obj, column=newColumn)
+            MP_branch.modelo.update()
+            MP_branch.RelaxOptimize()
+            best_cost = MP_branch.getCosts()
+            routes = MP_branch.modelo.getA().toarray()
+            queue.insert(0, copy_model(best_cost, routes, MP_branch))
+        else:
+            if not sol_is_int:
+                mp1_obj = None
+                mp2_obj = None
                 print("#--#--#--# Not integer solution  ........Branching")
                 MP_1, MP_2 = branch(
-                    n, demands, capacity, distances, duals, solution, MasterProb
+                    branch_cost, branch_routes, n, demands, capacity, distances, duals, solution, MP_branch
                 )
                 if MP_1 != None:
                     MP_1.RelaxOptimize()
-                    sol_MP_1 = MP_1.relax_modelo.ObjVal
-                    bst_temp.insert(MP_1.relax_modelo.ObjVal, MP_1)
+                    # mp1_obj = MP_1.relax_modelo.ObjVal
+                    mp1_cost = MP_1.getCosts()
+                    mp1_routes = MP_1.modelo.getA().toarray()
+                    queue.insert(0, copy_model(mp1_cost, mp1_routes, MP_1) )
                 if MP_2 != None:
                     MP_2.RelaxOptimize()
-                    sol_MP_2 = MP_2.relax_modelo.ObjVal
-                    bst_temp.insert(MP_2.relax_modelo.ObjVal, MP_2)
+                    # mp2_obj = MP_2.relax_modelo.ObjVal
+                    mp2_cost = MP_2.getCosts()
+                    mp2_routes = MP_2.modelo.getA().toarray()
+                    queue.insert(0, copy_model(mp2_cost, mp2_routes, MP_2))
+
                 if MP_1 == None and MP_2 == None:
                     print("Not branched")
-                else:
-                    branched = True
-                break
 
-        if not branched:
-
-            SP_branch = SubProblem(n, demands, capacity, distances, duals)
-            SP_branch.build_model()
-
-            SP_branch.optimize()
-
-            print("--------SP Obj Val:{}".format(SP_branch.modelo.ObjVal))
-
-            newAssing = [SP_branch.y[i].x for i in SP_branch.y]  # new route
-            newColumn = gp.Column(newAssing, MasterProb.modelo.getConstrs())
-            obj = get_min_dist(newAssing, distances)  # Cost of new route
-            MasterProb.modelo.addVar(vtype=GRB.BINARY, obj=obj, column=newColumn)
-            MasterProb.modelo.update()
-            MasterProb.RelaxOptimize()
-            bst_temp.insert(MasterProb.relax_modelo.ObjVal, MasterProb)
-
-            if obj + SP_branch.modelo.ObjVal >= -0.00001:  # break if no more columns
-
-                break
-
-        else:
-            node = bst_temp.find_min()
-            # while last_obj == node.obj:
-            #     bst_temp.remove(node.obj)
-            #     node = bst_temp.find_min()
-            MasterProb = node.model
-            # last_obj = node.obj
-    return MasterProb
+    return best_model
 
 
-def branch(n, demands, C, distances, duals, solution_to_branch, MP_to_copy):
+def branch(branch_cost, branch_routes, n, demands, capacity, distances, duals, solution_to_branch, MP_to_copy):
 
     SP_1 = SubProblem(n, demands, capacity, distances, duals)
     SP_2 = SubProblem(n, demands, capacity, distances, duals)
@@ -99,7 +91,8 @@ def branch(n, demands, C, distances, duals, solution_to_branch, MP_to_copy):
         if val > 0.0 and val < 1.0:
             frac_ixs.append(ix)
 
-    A_mp = MP_to_copy.modelo.getA().toarray()[: len(MP_to_copy.locations_index), :]
+    A_mp = MP_to_copy.modelo.getA().toarray()
+
     locations_index = list(MP_to_copy.locations_index)
 
     for comb in combinations(frac_ixs, 2):
@@ -107,112 +100,81 @@ def branch(n, demands, C, distances, duals, solution_to_branch, MP_to_copy):
         s1_and_s2 = [
             True
             if (
-                A_mp[i, comb[0]] > 0
-                and A_mp[i, comb[0]] < 1
-                and A_mp[i, comb[1]] > 0
-                and A_mp[i, comb[1]] < 1
+                A_mp[i-1, comb[0]] == 1
+                and A_mp[i-1, comb[1]] == 1
             )
             else False
-            for i in range(len(MP.locations_index))
+            for i in range(len(MP_to_copy.locations_index))
         ]
         s1_not_s2 = [
             True
-            if (A_mp[i, comb[0]] > 0 and A_mp[i, comb[0]] < 1 and A_mp[i, comb[1]] == 0)
+            if (A_mp[i-1, comb[0]] == 1 and A_mp[i-1, comb[1]] == 0)
             else False
-            for i in range(len(MP.locations_index))
+            for i in range(len(MP_to_copy.locations_index))
         ]
 
+        add_constr = False
         for i in locations_index:
             locations_prime = [x for x in locations_index if x != i]
             for j in locations_prime:
 
-                if (s1_and_s2[i - 1] and s1_not_s2[j - 1]) or (
-                    s1_and_s2[j - 1] and s1_not_s2[i - 1]
-                ):
-                    SP_1.modelo.addConstr(SP_1.y[i - 1] + SP_1.y[j - 1] == 2)
-                    SP_2.modelo.addConstr(SP_2.y[i - 1] + SP_2.y[j - 1] <= 1)
+                # if (s1_and_s2[i - 1] and s1_not_s2[j - 1]) or (
+                #     s1_and_s2[j - 1] and s1_not_s2[i - 1]
+                # ):
+                #     SP_1.modelo.addConstr(SP_1.y[i - 1] + SP_1.y[j - 1] == 2)
+                #     SP_2.modelo.addConstr(SP_2.y[i - 1] + SP_2.y[j - 1] <= 1)
+                #     add_constr = True
+                #     break
+                if (s1_and_s2[i - 1] and s1_not_s2[j - 1]):
+                    SP_1.modelo.addConstr(SP_1.y[i - 1] == 1.0)
+                    SP_1.modelo.addConstr(SP_1.y[j - 1] == 1.0)
+                    SP_2.modelo.addConstr(SP_2.y[i - 1] == 1.0)
+                    SP_2.modelo.addConstr(SP_2.y[j - 1] == 0.0)
+                    add_constr = True
+                    break
 
-    MP_1, MP_2 = copy_models(MP_to_copy)
+            if add_constr:
+                break
+        if add_constr:
+            break
+
+    MP_1, MP_2 = copy_models(branch_cost, branch_routes, MP_to_copy)
+
+    return_MP_1 = False
+    return_MP_2 = False
 
     SP_1.modelo.update()
     SP_1.optimize()
     if SP_1.modelo.Status == 2:
+
         newAssing = [SP_1.y[i].x for i in SP_1.y]  # new Assingment
-        newColumn = gp.Column(newAssing, MP_1.modelo.getConstrs())
         obj = get_min_dist(newAssing, distances)  # Cost of new route
-        MP_1.modelo.addVar(vtype=GRB.BINARY, obj=obj, column=newColumn)
-        MP_1.modelo.update()
+
+        if obj + SP_1.modelo.ObjVal < 0.0:
+            newColumn = gp.Column(newAssing, MP_1.modelo.getConstrs())
+            MP_1.modelo.addVar(vtype=GRB.BINARY, obj=obj, column=newColumn)
+            MP_1.modelo.update()
+            return_MP_1 = True
 
     SP_2.modelo.update()
     SP_2.optimize()
     if SP_2.modelo.Status == 2:
-        matriz = MP_2.modelo.getA().toarray()[: len(MP.locations_index), :]
-        newAssing = [SP_2.y[i].x for i in SP_2.y]  # new Assingment
-        newColumn = gp.Column(newAssing, MP_2.modelo.getConstrs())
-        obj = get_min_dist(newAssing, distances)  # Cost of new route
-        MP_2.modelo.addVar(vtype=GRB.BINARY, obj=obj, column=newColumn)
-        MP_2.modelo.update()
 
-    if SP_1.modelo.Status == 2 and SP_2.modelo.Status == 2:
+        newAssing = [SP_2.y[i].x for i in SP_2.y]  # new Assingment
+        obj = get_min_dist(newAssing, distances)  # Cost of new route
+
+        if obj + SP_2.modelo.ObjVal < 0.0:
+
+            newColumn = gp.Column(newAssing, MP_2.modelo.getConstrs())
+            MP_2.modelo.addVar(vtype=GRB.BINARY, obj=obj, column=newColumn)
+            MP_2.modelo.update()
+            return_MP_2 = True
+
+    if return_MP_1 and return_MP_2:
         return MP_1, MP_2
-    elif SP_1.modelo.Status == 2:
+    elif return_MP_1:
         return MP_1, None
-    elif SP_2.modelo.Status == 2:
+    elif return_MP_2:
         return None, MP_2
     else:
         return None, None
-
-
-coordinates_list = []
-demands = []
-with open("instances/A-VRP/A-n32-k5.vrp") as f:
-    lines = f.readlines()
-    for line in lines:
-        sol_C = re.findall(r"CAPACITY : \d*", line)
-        if sol_C != []:
-            list_str = sol_C[0].split(" ")
-            capacity = int(list_str[2])
-        sol_coord = re.findall(r"\d{1,2}\s\d{1,2}\s\d{1,2}", line)
-        sol_demands = re.findall(r"\d{1,2}\s\d{1,2}\s\s", line)
-        if sol_coord != []:
-            coords = sol_coord[0].split(" ")
-            coordinates_list.append([int(coords[1]), int(coords[2])])
-        if sol_demands != []:
-            demand_str = sol_demands[0].split(" ")
-            demands.append(int(demand_str[1]))
-
-coordinates = np.stack(coordinates_list, axis=0)
-distances = euclidean_distances(coordinates)
-n = coordinates.shape[0]
-EPS = 0.001
-
-start_time = time.time()
-# ------ Encontrar assingments iniciales factibles ------#
-greedy_problem = GreedySolution(n, capacity, distances, demands)
-init_assingments, init_routes = greedy_problem.generate_init_solution()
-# ------------------------------------------------------#
-
-c = []
-for route in init_routes:
-    c_temp = 0
-    for ix, val in enumerate(route):
-
-        if ix < len(route) - 1:
-            c_temp += distances[val, route[ix + 1]]
-    c.append(c_temp)
-
-MP = MasterProblem(c, init_assingments)
-MP.build_model()
-
-
-obj_val = 100000
-
-iteraciones = 0
-
-MP_sol = solve_price(obj_val, demands, capacity, distances, MP)
-
-end_time = time.time()
-print("RUN TIME:{} seg.".format(end_time - start_time))
-# print(np.sum(MP..getA().toarray()[:n,:7],axis=1))
-# print(np.sum(best_model.getA().toarray()[:n,:7],axis=0))
-print(MP_sol.relax_modelo.getAttr("X"))
