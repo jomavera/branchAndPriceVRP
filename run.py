@@ -1,5 +1,5 @@
 import re
-from BnP_v2 import branch_n_price
+from BnP import branch_n_price
 import numpy as np
 from sklearn.metrics.pairwise import euclidean_distances
 import time

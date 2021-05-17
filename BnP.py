@@ -13,7 +13,7 @@ def branch_n_price(n, c, init_assignments, demands, capacity, distances, MasterP
     best_obj = 1e3
     nodes_explored = 0
     best_model = None
-
+    
     while len(queue) > 0:
         MP_branch = queue.pop()
         nodes_explored += 1
@@ -33,25 +33,17 @@ def branch_n_price(n, c, init_assignments, demands, capacity, distances, MasterP
                 print(f"best sol: {solution}")
                 best_model = copy_model(branch_cost, branch_routes, MP_branch)
 
-        SP_branch = SubProblem(n, demands, capacity, distances, duals)
-        SP_branch.build_model()
+        # --- # --- # Column generation # --- # --- #
+        new_MP = column_generation(n, demands, capacity, distances, duals, MP_branch)
 
-        SP_branch.optimize()
-
-        # print("--------SP Obj Val:{}".format(SP_branch.modelo.ObjVal))
-
-        newAssing = [SP_branch.y[i].x for i in SP_branch.y]  # new route
-        obj = get_min_dist(newAssing, distances)  # Cost of new route
-
-        if obj + SP_branch.modelo.ObjVal < 0.0: 
-            newColumn = gp.Column(newAssing, MasterProb.modelo.getConstrs())
-            MP_branch.modelo.addVar(vtype=GRB.BINARY, obj=obj, column=newColumn)
-            MP_branch.modelo.update()
-            MP_branch.RelaxOptimize()
-            best_cost = MP_branch.getCosts()
-            routes = MP_branch.modelo.getA().toarray()
-            queue.insert(0, copy_model(best_cost, routes, MP_branch))
+        if new_MP != None:
+            new_MP.RelaxOptimize()
+            branch_cost = new_MP.getCosts()
+            branch_routes = new_MP.modelo.getA().toarray()
+            queue.insert(0, copy_model(branch_cost, branch_routes, new_MP))
+        
         else:
+            # --- # If stopped col generation then branch if solution is not integer # --- #
             if not sol_is_int:
                 mp1_obj = None
                 mp2_obj = None
@@ -132,7 +124,7 @@ def branch(branch_cost, branch_routes, n, demands, capacity, distances, duals, s
                     SP_2.modelo.addConstr(SP_2.y[j - 1] == 0.0)
                     add_constr = True
                     break
-
+            
             if add_constr:
                 break
         if add_constr:
@@ -146,7 +138,7 @@ def branch(branch_cost, branch_routes, n, demands, capacity, distances, duals, s
     SP_1.modelo.update()
     SP_1.optimize()
     if SP_1.modelo.Status == 2:
-
+        
         newAssing = [SP_1.y[i].x for i in SP_1.y]  # new Assingment
         obj = get_min_dist(newAssing, distances)  # Cost of new route
 
@@ -178,3 +170,28 @@ def branch(branch_cost, branch_routes, n, demands, capacity, distances, duals, s
         return None, MP_2
     else:
         return None, None
+
+def column_generation(n, demands, capacity, distances, duals, MP_branch):
+    
+    SP_branch = SubProblem(n, demands, capacity, distances, duals)
+    SP_branch.build_model()
+
+    SP_branch.optimize()
+
+    new_MP = None
+
+    newAssing = [SP_branch.y[i].x for i in SP_branch.y]  # new route
+    obj = get_min_dist(newAssing, distances)  # Cost of new route
+
+    if obj + SP_branch.modelo.ObjVal < 0.0: 
+        newColumn = gp.Column(newAssing, MP_branch.modelo.getConstrs())
+        MP_branch.modelo.addVar(vtype=GRB.BINARY, obj=obj, column=newColumn)
+        MP_branch.modelo.update()
+        MP_branch.RelaxOptimize()
+        best_cost = MP_branch.getCosts()
+        routes = MP_branch.modelo.getA().toarray()
+
+        new_MP = copy_model(best_cost, routes, MP_branch)
+    
+    return new_MP
+        
