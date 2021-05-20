@@ -104,3 +104,26 @@ class GreedySolution:
                     break
 
         return np.stack(routes, axis=1), route_orders
+
+class PriorityQueue(object):
+    def __init__(self):
+        self.queue = []
+
+    def isEmpty(self):
+        return len(self.queue) == 0
+
+    def insert(self, obj, MP):
+        self.queue.append([obj,MP])
+
+    def delete(self):
+        try:
+            min = 0
+            for i in range(len(self.queue)):
+                if self.queue[i][0] < self.queue[min][0]:
+                    min = i
+            item = self.queue[min]
+            del self.queue[min]
+            return item
+        except IndexError:
+            print()
+            exit()
