@@ -53,7 +53,7 @@ MP = MasterProblem(c, init_assingments)
 MP.build_model()
 
 # ------------- Run Branch and Price ----------#
-MP_sol = branch_n_price(n, c, init_assingments, demands, capacity, distances, MP)
+MP_sol = branch_n_price(n, demands, capacity, distances, MP)
 
 
 end_time = time.time()
