@@ -2,7 +2,7 @@
 
 ## Description
 
-This repository contains a (incomplete) implementation of Branch and Price for the Vehicle Routing Problem. The branching is generated as describe in section 4.5.2 of [On-Time Last-Mile Delivery: Order Assignment with Travel-Time Predictors](https://pubsonline.informs.org/doi/10.1287/mnsc.2020.3741). Node explroration is according a priority queue.
+This repository contains an (incomplete) implementation of Branch and Price for the Vehicle Routing Problem. The branching is generated as describe in section 4.5.2 of [On-Time Last-Mile Delivery: Order Assignment with Travel-Time Predictors](https://pubsonline.informs.org/doi/10.1287/mnsc.2020.3741). Node exploration is according a priority queue.
 
 ## Prerequisites
 
